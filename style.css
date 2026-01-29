@@ -1,10 +1,11 @@
 html, body {
   margin: 0;
   padding: 0;
-  overflow: hidden;
-  background-color: #1D1D1D;
-  font-family: 'basic-sans', Helvetica, Arial, sans-serif;
+  overflow: hidden;         /* Prevents scrollbars */
+  background-color: #1D1D1D; /* Matches your dark grey background */
+  font-family: 'DM Sans', sans-serif; /* The new font */
 }
+
 canvas {
-  display: block;
+  display: block;           /* Removes extra white space at the bottom */
 }
