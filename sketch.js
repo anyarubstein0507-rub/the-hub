@@ -1,4 +1,16 @@
-let circles = [];
+// --- FIREBASE CONFIGURATION (Linked to your Project) ---
+const firebaseConfig = {
+  apiKey: "AIzaSyCfa_I1642RFckchkTS4EdJxnGLgwNrGwQ",
+  authDomain: "the-hub-50647.firebaseapp.com",
+  projectId: "the-hub-50647",
+  storageBucket: "the-hub-50647.firebasestorage.app",
+  messagingSenderId: "756123675906",
+  appId: "1:756123675906:web:3467dd7637e7ab4642e61b"
+};
+
+// Global Variables
+let db;
+let circles = []; // This now holds data from the cloud
 let glueLayer;
 let capture;
 let snapshot = null;
@@ -22,11 +34,26 @@ const GREY_TEXT = 'rgba(239, 237, 233, 0.6)';
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
-  
-  // 1. HIGH RES SETTINGS
   pixelDensity(window.devicePixelRatio); 
 
-  // 2. SETUP GLUE LAYER
+  // --- 1. CONNECT TO DATABASE ---
+  firebase.initializeApp(firebaseConfig);
+  db = firebase.firestore();
+
+  // --- 2. LISTEN FOR UPDATES (MULTIPLAYER MAGIC) ---
+  // This runs every time ANYONE adds a photo to the database
+  db.collection("circles").onSnapshot((querySnapshot) => {
+      let newCircles = [];
+      querySnapshot.forEach((doc) => {
+          let data = doc.data();
+          // We recreate the circle using the data from the cloud
+          let c = new Circle(data.x, data.y, data.imageString, data.name, data.tasks, doc.id);
+          newCircles.push(c);
+      });
+      circles = newCircles; // Update our world
+  });
+
+  // Setup Graphics
   glueLayer = createGraphics(worldWidth, height);
   glueLayer.pixelDensity(window.devicePixelRatio); 
 
@@ -34,7 +61,6 @@ function setup() {
   capture.size(250, 250);
   capture.hide();
   
-  // 3. CORRECT FONT (Matches your HTML)
   textFont('DM Sans');
 }
 
@@ -55,7 +81,7 @@ function draw() {
   }
   scrollX = constrain(scrollX, 0, worldWidth - width);
 
-  // --- 1. GLUE LAYER ---
+  // --- GLUE LAYER ---
   glueLayer.background(BG_COLOR);
   glueLayer.noStroke();
   glueLayer.fill(255);
@@ -69,21 +95,21 @@ function draw() {
   glueLayer.filter(BLUR, 12);
   glueLayer.filter(THRESHOLD, 0.5);
 
-  // --- 2. RENDER WORLD ---
+  // --- RENDER WORLD ---
   push();
   translate(-scrollX, 0);
   
-  // GLOWS
+  // Glows
   for (let c of circles) {
     if (c.connections.length > 0) c.drawGlow();
   }
 
-  // GLUE (Tinted)
+  // Glue
   tint(CREAM);
   image(glueLayer, 0, 0); 
   noTint();
   
-  // FACES
+  // Faces
   for (let c of circles) {
     c.display();
   }
@@ -143,16 +169,10 @@ function drawCameraInterface() {
   rect(0, 0, width, height);
   let cx = width / 2 - 125, cy = height / 2 - 125;
 
-  // Draw Camera or Snapshot
   if (snapshot) {
       image(snapshot, cx, cy, 250, 250);
   } else {
-    push(); 
-    translate(cx + 250, cy); 
-    scale(-1, 1); 
-    // Force camera into the box to prevent zooming issues
-    image(capture, 0, 0, 250, 250); 
-    pop();
+    push(); translate(cx + 250, cy); scale(-1, 1); image(capture, 0, 0, 250, 250); pop();
   }
 
   textAlign(CENTER);
@@ -183,8 +203,21 @@ function keyPressed() {
   } 
   else if (inputMode === "tasks") {
     if (keyCode === ENTER && userTasks.length > 0) {
-      // Create circle with current snapshot
-      circles.push(new Circle(width / 2, height / 2, snapshot.get(), userName.toLowerCase(), int(userTasks)));
+      // --- UPLOAD TO DATABASE ---
+      // 1. Convert image to text string (Base64)
+      let imgString = snapshot.canvas.toDataURL('image/png');
+      
+      // 2. Send to Firebase
+      db.collection("circles").add({
+          name: userName.toLowerCase(),
+          tasks: int(userTasks),
+          imageString: imgString,
+          x: width / 2, // Start in middle
+          y: height / 2,
+          timestamp: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      // 3. Reset UI
       inputMode = "none"; showCamera = false; snapshot = null; userName = ""; userTasks = "";
     } else if (keyCode === BACKSPACE) userTasks = userTasks.substring(0, userTasks.length - 1);
     else if (key >= '0' && key <= '9' && userTasks.length < 3) userTasks += key;
@@ -192,40 +225,37 @@ function keyPressed() {
 }
 
 class Circle {
-  constructor(x, y, img, name, tasks) {
+  constructor(x, y, imgString, name, tasks, id) {
     let angle = random(TWO_PI);
     let distOut = random(100, 140); 
-    this.pos = createVector(x + scrollX + cos(angle) * distOut, y + sin(angle) * distOut);
+    // If x/y exist, use them, otherwise random scatter
+    if (x && y) this.pos = createVector(x, y);
+    else this.pos = createVector(width/2 + scrollX + cos(angle) * distOut, height/2 + sin(angle) * distOut);
     
-    // --- SIZE SETTINGS ---
-    this.r = 45; // Radius 45 = 90px wide circle
+    this.r = 45;
     this.dragging = false;
     this.offset = random(100);
-    
-    // --- CRITICAL FIX: Resize image to fit mask perfectly ---
-    this.img = img; 
-    this.img.resize(90, 90); // Squeezes the 250px photo into 90px 
+    this.id = id; // Store Database ID
 
     this.displayName = name;
     this.tasks = tasks;
     this.connections = []; 
 
-    // Create mask
-    this.maskGfx = createGraphics(90, 90);
-    this.maskGfx.ellipse(45, 45, 90, 90);
-    this.img.mask(this.maskGfx);
+    // --- ASYNC IMAGE LOADING ---
+    // We start with a blank image, then load the real one
+    this.img = createImage(90, 90);
+    loadImage(imgString, (loadedImg) => {
+        loadedImg.resize(90, 90);
+        this.img = loadedImg;
+        // Apply mask after loading
+        this.maskGfx = createGraphics(90, 90);
+        this.maskGfx.ellipse(45, 45, 90, 90);
+        this.img.mask(this.maskGfx);
+    });
   }
 
   applyBehaviors(others) {
-    if (this.dragging) {
-        for (let i = this.connections.length - 1; i >= 0; i--) {
-            let other = this.connections[i];
-            if (dist(this.pos.x, this.pos.y, other.pos.x, other.pos.y) > 180) {
-                this.breakConnection(other);
-            }
-        }
-        return;
-    }
+    if (this.dragging) return; // Don't move if user is holding it
 
     let viewCenter = createVector(width/2 + scrollX, height/2);
     if (dist(this.pos.x, this.pos.y, viewCenter.x, viewCenter.y) < 85) {
@@ -254,11 +284,6 @@ class Circle {
     }
   }
 
-  breakConnection(other) {
-    this.connections = this.connections.filter(c => c !== other);
-    other.connections = other.connections.filter(c => c !== this);
-  }
-
   update() {
     if (this.dragging) this.pos.set(mouseX + scrollX, mouseY);
     else this.pos.y += sin(frameCount * 0.03 + this.offset) * 0.2;
@@ -280,7 +305,7 @@ class Circle {
     push();
     translate(this.pos.x, this.pos.y);
     
-    // 1. Gradient Border
+    // Border
     let grad = drawingContext.createLinearGradient(-this.r, -this.r, this.r, this.r);
     grad.addColorStop(0, CREAM);
     grad.addColorStop(1, LILAC);
@@ -288,17 +313,17 @@ class Circle {
     noStroke();
     ellipse(0, 0, this.r * 2);
 
-    // 2. Photo (Now centered!)
+    // Photo
     imageMode(CENTER);
     tint(200, 180, 220); 
     image(this.img, 0, 0, this.r * 1.8, this.r * 1.8);
     noTint();
 
-    // 3. Extra Wash Overlay
+    // Wash
     fill(147, 164, 255, 40); 
     ellipse(0, 0, this.r * 1.8);
 
-    // 4. Text
+    // Text
     fill(CREAM);
     textAlign(CENTER, CENTER);
     textStyle(BOLD);
@@ -310,35 +335,22 @@ class Circle {
 
 function mousePressed() {
   if (inputMode !== "none") return;
-  
   if (showCamera) {
     let cx = width / 2 - 125, cy = height / 2 - 125;
-    // Check if clicking OUTSIDE the camera box
     if (mouseX < cx || mouseX > cx + 250 || mouseY < cy || mouseY > cy + 300) {
       showCamera = false; snapshot = null; return;
     }
-    
-    // Take Snapshot
     if (!snapshot) {
-      // --- FIX: Capture the video and force it into 250x250 ---
-      let temp = capture.get(); 
+      let temp = capture.get();
       snapshot = createGraphics(250, 250);
-      snapshot.push(); 
-      snapshot.translate(250, 0); 
-      snapshot.scale(-1, 1); 
-      snapshot.image(temp, 0, 0, 250, 250); // Force fit
-      snapshot.pop();
+      snapshot.push(); snapshot.translate(250, 0); snapshot.scale(-1, 1); snapshot.image(temp, 0, 0, 250, 250); snapshot.pop();
     } else {
       if (mouseX > width/2) inputMode = "name";
       else snapshot = null;
     }
     return;
   }
-  
-  // Click Plus Button
   if (dist(mouseX, mouseY, width / 2, height / 2) < 40) showCamera = true;
-  
-  // Dragging Logic
   for (let c of circles) {
     if (dist(mouseX + scrollX, mouseY, c.pos.x, c.pos.y) < c.r) {
       c.dragging = true; break;
