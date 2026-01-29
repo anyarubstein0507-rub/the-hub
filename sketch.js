@@ -1,4 +1,4 @@
-// --- FIREBASE CONFIGURATION (Linked to your Project) ---
+// --- FIREBASE CONFIGURATION ---
 const firebaseConfig = {
   apiKey: "AIzaSyCfa_I1642RFckchkTS4EdJxnGLgwNrGwQ",
   authDomain: "the-hub-50647.firebaseapp.com",
@@ -10,11 +10,12 @@ const firebaseConfig = {
 
 // Global Variables
 let db;
-let circles = []; // This now holds data from the cloud
+let circles = [];
 let glueLayer;
 let capture;
 let snapshot = null;
 let showCamera = false;
+let activeInput = null; // Holds the text box
 
 // Input States
 let userName = ""; 
@@ -35,22 +36,25 @@ const GREY_TEXT = 'rgba(239, 237, 233, 0.6)';
 function setup() {
   createCanvas(windowWidth, windowHeight);
   pixelDensity(window.devicePixelRatio); 
+  
+  // --- MOBILE FIX: LOCK SCROLL ---
+  // This stops the page from "bouncing" when you drag
+  document.body.style.overflow = 'hidden'; 
+  document.body.style.touchAction = 'none';
 
-  // --- 1. CONNECT TO DATABASE ---
+  // --- CONNECT TO DATABASE ---
   firebase.initializeApp(firebaseConfig);
   db = firebase.firestore();
 
-  // --- 2. LISTEN FOR UPDATES (MULTIPLAYER MAGIC) ---
-  // This runs every time ANYONE adds a photo to the database
-  db.collection("circles").onSnapshot((querySnapshot) => {
+  // --- LISTEN FOR UPDATES ---
+  db.collection("circles").orderBy("timestamp", "asc").onSnapshot((querySnapshot) => {
       let newCircles = [];
       querySnapshot.forEach((doc) => {
           let data = doc.data();
-          // We recreate the circle using the data from the cloud
           let c = new Circle(data.x, data.y, data.imageString, data.name, data.tasks, doc.id);
           newCircles.push(c);
       });
-      circles = newCircles; // Update our world
+      circles = newCircles;
   });
 
   // Setup Graphics
@@ -70,13 +74,26 @@ function windowResized() {
   glueLayer.pixelDensity(window.devicePixelRatio);
 }
 
+// --- MOBILE FIX: PREVENT DEFAULT SCROLLING ---
+function touchMoved() {
+  // If we are NOT in the camera, block default browser scrolling
+  if (!showCamera) {
+    return false;
+  }
+}
+
 function draw() {
   background(BG_COLOR);
 
-  if (mouseIsPressed && !showCamera && inputMode === "none") {
+  // --- SCROLL LOGIC (UPDATED FOR MOBILE) ---
+  if (mouseIsPressed && !showCamera && inputMode === "none" && !activeInput) {
     let draggingAny = circles.some(c => c.dragging);
+    
+    // If we aren't holding a circle, drag the world
     if (!draggingAny) {
-        scrollX -= movedX; 
+        // use (mouseX - pmouseX) instead of movedX for better touch response
+        let delta = mouseX - pmouseX;
+        scrollX -= delta; 
     }
   }
   scrollX = constrain(scrollX, 0, worldWidth - width);
@@ -99,17 +116,14 @@ function draw() {
   push();
   translate(-scrollX, 0);
   
-  // Glows
   for (let c of circles) {
     if (c.connections.length > 0) c.drawGlow();
   }
 
-  // Glue
   tint(CREAM);
   image(glueLayer, 0, 0); 
   noTint();
   
-  // Faces
   for (let c of circles) {
     c.display();
   }
@@ -127,39 +141,24 @@ function drawHeader() {
   push();
   noStroke();
   textAlign(LEFT, TOP);
-  
-  fill(CREAM);
-  textSize(24);
-  textStyle(BOLD);
+  fill(CREAM); textSize(24); textStyle(BOLD);
   text("welcome to the live hub", 30, 30);
-  
   textSize(12);
-  
   let liveCount = circles.length + " people ";
-  fill(CREAM); textStyle(BOLD);
-  text(liveCount, 30, 64);
-  
+  fill(CREAM); textStyle(BOLD); text(liveCount, 30, 64);
   let xOffset = textWidth(liveCount);
-  fill(GREY_TEXT); textStyle(NORMAL);
-  text("live right now", 30 + xOffset, 64);
-  
+  fill(GREY_TEXT); textStyle(NORMAL); text("live right now", 30 + xOffset, 64);
   let totalTasks = circles.reduce((sum, c) => sum + int(c.tasks), 0) + " tasks ";
-  fill(CREAM); textStyle(BOLD);
-  text(totalTasks, 30, 82);
-  
+  fill(CREAM); textStyle(BOLD); text(totalTasks, 30, 82);
   let yOffset = textWidth(totalTasks);
-  fill(GREY_TEXT); textStyle(NORMAL);
-  text("completed today", 30 + yOffset, 82);
+  fill(GREY_TEXT); textStyle(NORMAL); text("completed today", 30 + yOffset, 82);
   pop();
 }
 
 function drawPlus() {
   push();
-  fill(255);
-  noStroke();
-  textAlign(CENTER, CENTER);
-  textStyle(BOLD);
-  textSize(50);
+  fill(255); noStroke(); textAlign(CENTER, CENTER);
+  textStyle(BOLD); textSize(50);
   text("+", width / 2, height / 2 - 5);
   pop();
 }
@@ -187,67 +186,104 @@ function drawCameraInterface() {
     fill(CREAM); 
     if (inputMode === "name") {
       textSize(20); text("type your name & press enter", width/2, cy - 40);
-      textSize(32); text(userName.toLowerCase() + "|", width/2, cy + 300);
     } else if (inputMode === "tasks") {
       textSize(20); text("how many tasks have you completed today?", width/2, cy - 40);
-      textSize(48); fill(LILAC); text(userTasks + "|", width/2, cy + 310);
     }
   }
 }
 
-function keyPressed() {
-  if (inputMode === "name") {
-    if (keyCode === ENTER && userName.length > 0) inputMode = "tasks";
-    else if (keyCode === BACKSPACE) userName = userName.substring(0, userName.length - 1);
-    else if (key.length === 1 && userName.length < 12) userName += key;
-  } 
-  else if (inputMode === "tasks") {
-    if (keyCode === ENTER && userTasks.length > 0) {
-      // --- UPLOAD TO DATABASE ---
-      // 1. Convert image to text string (Base64)
-      let imgString = snapshot.canvas.toDataURL('image/png');
-      
-      // 2. Send to Firebase
-      db.collection("circles").add({
-          name: userName.toLowerCase(),
-          tasks: int(userTasks),
-          imageString: imgString,
-          x: width / 2, // Start in middle
-          y: height / 2,
-          timestamp: firebase.firestore.FieldValue.serverTimestamp()
-      });
+// --- NEW KEYBOARD LOGIC (WORKS ON MOBILE) ---
+function createStyledInput(isNumber) {
+  if (activeInput) activeInput.remove();
+  
+  activeInput = createInput('');
+  if (isNumber) activeInput.attribute('type', 'number');
+  
+  // Style to match design
+  activeInput.style('font-family', 'DM Sans');
+  activeInput.style('background', 'transparent');
+  activeInput.style('border', 'none');
+  activeInput.style('border-bottom', '2px solid #93A4FF'); 
+  activeInput.style('color', '#EFEDE9'); 
+  activeInput.style('font-size', '32px');
+  activeInput.style('text-align', 'center');
+  activeInput.style('width', '200px');
+  activeInput.style('outline', 'none');
+  activeInput.style('z-index', '1000');
+  
+  // Fixed Position for Mobile
+  activeInput.style('position', 'fixed');
+  activeInput.style('left', '50%');
+  activeInput.style('top', '65%'); 
+  activeInput.style('transform', 'translate(-50%, -50%)');
 
-      // 3. Reset UI
-      inputMode = "none"; showCamera = false; snapshot = null; userName = ""; userTasks = "";
-    } else if (keyCode === BACKSPACE) userTasks = userTasks.substring(0, userTasks.length - 1);
-    else if (key >= '0' && key <= '9' && userTasks.length < 3) userTasks += key;
+  // Force Focus
+  setTimeout(() => activeInput.elt.focus(), 10);
+  
+  activeInput.elt.addEventListener("keydown", function(event) {
+    if (event.key === "Enter") {
+        handleInputSubmit();
+    }
+  });
+}
+
+function handleInputSubmit() {
+  if (inputMode === "name") {
+      let val = activeInput.value();
+      if (val.length > 0) {
+          userName = val;
+          inputMode = "tasks";
+          createStyledInput(true); // Switch to tasks (number keyboard)
+      }
+  } else if (inputMode === "tasks") {
+      let val = activeInput.value();
+      if (val.length > 0) {
+          userTasks = val;
+          uploadCircle();
+      }
   }
+}
+
+function uploadCircle() {
+  if (activeInput) {
+      activeInput.remove();
+      activeInput = null;
+  }
+
+  let imgString = snapshot.canvas.toDataURL('image/png');
+  
+  db.collection("circles").add({
+      name: userName.toLowerCase(),
+      tasks: int(userTasks),
+      imageString: imgString,
+      x: width / 2,
+      y: height / 2,
+      timestamp: firebase.firestore.FieldValue.serverTimestamp()
+  });
+
+  inputMode = "none"; showCamera = false; snapshot = null; userName = ""; userTasks = "";
 }
 
 class Circle {
   constructor(x, y, imgString, name, tasks, id) {
     let angle = random(TWO_PI);
     let distOut = random(100, 140); 
-    // If x/y exist, use them, otherwise random scatter
     if (x && y) this.pos = createVector(x, y);
     else this.pos = createVector(width/2 + scrollX + cos(angle) * distOut, height/2 + sin(angle) * distOut);
     
     this.r = 45;
     this.dragging = false;
     this.offset = random(100);
-    this.id = id; // Store Database ID
+    this.id = id;
 
     this.displayName = name;
     this.tasks = tasks;
     this.connections = []; 
 
-    // --- ASYNC IMAGE LOADING ---
-    // We start with a blank image, then load the real one
     this.img = createImage(90, 90);
     loadImage(imgString, (loadedImg) => {
         loadedImg.resize(90, 90);
         this.img = loadedImg;
-        // Apply mask after loading
         this.maskGfx = createGraphics(90, 90);
         this.maskGfx.ellipse(45, 45, 90, 90);
         this.img.mask(this.maskGfx);
@@ -255,7 +291,7 @@ class Circle {
   }
 
   applyBehaviors(others) {
-    if (this.dragging) return; // Don't move if user is holding it
+    if (this.dragging) return;
 
     let viewCenter = createVector(width/2 + scrollX, height/2);
     if (dist(this.pos.x, this.pos.y, viewCenter.x, viewCenter.y) < 85) {
@@ -305,7 +341,6 @@ class Circle {
     push();
     translate(this.pos.x, this.pos.y);
     
-    // Border
     let grad = drawingContext.createLinearGradient(-this.r, -this.r, this.r, this.r);
     grad.addColorStop(0, CREAM);
     grad.addColorStop(1, LILAC);
@@ -313,17 +348,14 @@ class Circle {
     noStroke();
     ellipse(0, 0, this.r * 2);
 
-    // Photo
     imageMode(CENTER);
     tint(200, 180, 220); 
     image(this.img, 0, 0, this.r * 1.8, this.r * 1.8);
     noTint();
 
-    // Wash
     fill(147, 164, 255, 40); 
     ellipse(0, 0, this.r * 1.8);
 
-    // Text
     fill(CREAM);
     textAlign(CENTER, CENTER);
     textStyle(BOLD);
@@ -334,7 +366,8 @@ class Circle {
 }
 
 function mousePressed() {
-  if (inputMode !== "none") return;
+  if (activeInput) return; // Don't do anything if we are typing
+
   if (showCamera) {
     let cx = width / 2 - 125, cy = height / 2 - 125;
     if (mouseX < cx || mouseX > cx + 250 || mouseY < cy || mouseY > cy + 300) {
@@ -345,7 +378,10 @@ function mousePressed() {
       snapshot = createGraphics(250, 250);
       snapshot.push(); snapshot.translate(250, 0); snapshot.scale(-1, 1); snapshot.image(temp, 0, 0, 250, 250); snapshot.pop();
     } else {
-      if (mouseX > width/2) inputMode = "name";
+      if (mouseX > width/2) {
+         inputMode = "name";
+         createStyledInput(false); // Enable Keyboard
+      }
       else snapshot = null;
     }
     return;
