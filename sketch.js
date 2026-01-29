@@ -23,19 +23,20 @@ const GREY_TEXT = 'rgba(239, 237, 233, 0.6)';
 function setup() {
   createCanvas(windowWidth, windowHeight);
   
-  // 1. High-Res Pixel Density (Makes it sharp on iPhones/Macs)
-  pixelDensity(displayDensity()); 
-
-  // 2. Setup Glue Layer to match screen quality
+  // --- FIX PIXELATION ---
+  // This tells the browser: "If this is an iPhone/Mac, use 2x or 3x more pixels"
+  pixelDensity(window.devicePixelRatio); 
+  
+  // --- SETUP GLUE LAYER ---
   glueLayer = createGraphics(worldWidth, height);
-  glueLayer.pixelDensity(displayDensity()); 
+  glueLayer.pixelDensity(window.devicePixelRatio); // Sharpens the liquid effect
 
   capture = createCapture(VIDEO);
   capture.size(250, 250);
   capture.hide();
   
-  // 3. UPDATED FONT (Matches index.html)
-  textFont('DM Sans');
+  // --- FIX FONT ---
+  textFont('DM Sans'); // This must match the HTML link exactly
 }
 
 function windowResized() {
