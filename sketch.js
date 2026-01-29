@@ -23,26 +23,25 @@ const GREY_TEXT = 'rgba(239, 237, 233, 0.6)';
 function setup() {
   createCanvas(windowWidth, windowHeight);
   
-  // --- FIX PIXELATION ---
-  // This tells the browser: "If this is an iPhone/Mac, use 2x or 3x more pixels"
+  // 1. HIGH RES SETTINGS
   pixelDensity(window.devicePixelRatio); 
-  
-  // --- SETUP GLUE LAYER ---
+
+  // 2. SETUP GLUE LAYER
   glueLayer = createGraphics(worldWidth, height);
-  glueLayer.pixelDensity(window.devicePixelRatio); // Sharpens the liquid effect
+  glueLayer.pixelDensity(window.devicePixelRatio); 
 
   capture = createCapture(VIDEO);
   capture.size(250, 250);
   capture.hide();
   
-  // --- FIX FONT ---
-  textFont('DM Sans'); // This must match the HTML link exactly
+  // 3. CORRECT FONT (Matches your HTML)
+  textFont('DM Sans');
 }
 
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
   glueLayer = createGraphics(worldWidth, height);
-  glueLayer.pixelDensity(displayDensity());
+  glueLayer.pixelDensity(window.devicePixelRatio);
 }
 
 function draw() {
@@ -56,19 +55,17 @@ function draw() {
   }
   scrollX = constrain(scrollX, 0, worldWidth - width);
 
-  // --- 1. PROCESS GLUE LAYER (Metaballs) ---
-  glueLayer.background(BG_COLOR); // Clear with dark background
+  // --- 1. GLUE LAYER ---
+  glueLayer.background(BG_COLOR);
   glueLayer.noStroke();
-  glueLayer.fill(255); // Draw white blobs
+  glueLayer.fill(255);
   
   for (let c of circles) {
     c.applyBehaviors(circles);
     c.update();
-    // Draw connections into glue layer
     glueLayer.ellipse(c.pos.x, c.pos.y, c.r * 2.2);
   }
   
-  // Liquid Filters
   glueLayer.filter(BLUR, 12);
   glueLayer.filter(THRESHOLD, 0.5);
 
@@ -76,19 +73,17 @@ function draw() {
   push();
   translate(-scrollX, 0);
   
-  // PASS 1: DRAW GLOWS
+  // GLOWS
   for (let c of circles) {
-    if (c.connections.length > 0) {
-      c.drawGlow();
-    }
+    if (c.connections.length > 0) c.drawGlow();
   }
 
-  // PASS 2: DRAW GLUE (Tinted Cream)
+  // GLUE (Tinted)
   tint(CREAM);
   image(glueLayer, 0, 0); 
   noTint();
   
-  // PASS 3: DRAW FACES
+  // FACES
   for (let c of circles) {
     c.display();
   }
@@ -148,9 +143,16 @@ function drawCameraInterface() {
   rect(0, 0, width, height);
   let cx = width / 2 - 125, cy = height / 2 - 125;
 
-  if (snapshot) image(snapshot, cx, cy, 250, 250);
-  else {
-    push(); translate(cx + 250, cy); scale(-1, 1); image(capture, 0, 0, 250, 250); pop();
+  // Draw Camera or Snapshot
+  if (snapshot) {
+      image(snapshot, cx, cy, 250, 250);
+  } else {
+    push(); 
+    translate(cx + 250, cy); 
+    scale(-1, 1); 
+    // Force camera into the box to prevent zooming issues
+    image(capture, 0, 0, 250, 250); 
+    pop();
   }
 
   textAlign(CENTER);
@@ -181,6 +183,7 @@ function keyPressed() {
   } 
   else if (inputMode === "tasks") {
     if (keyCode === ENTER && userTasks.length > 0) {
+      // Create circle with current snapshot
       circles.push(new Circle(width / 2, height / 2, snapshot.get(), userName.toLowerCase(), int(userTasks)));
       inputMode = "none"; showCamera = false; snapshot = null; userName = ""; userTasks = "";
     } else if (keyCode === BACKSPACE) userTasks = userTasks.substring(0, userTasks.length - 1);
@@ -193,14 +196,21 @@ class Circle {
     let angle = random(TWO_PI);
     let distOut = random(100, 140); 
     this.pos = createVector(x + scrollX + cos(angle) * distOut, y + sin(angle) * distOut);
-    this.r = 45;
+    
+    // --- SIZE SETTINGS ---
+    this.r = 45; // Radius 45 = 90px wide circle
     this.dragging = false;
     this.offset = random(100);
+    
+    // --- CRITICAL FIX: Resize image to fit mask perfectly ---
     this.img = img; 
+    this.img.resize(90, 90); // Squeezes the 250px photo into 90px 
+
     this.displayName = name;
     this.tasks = tasks;
     this.connections = []; 
 
+    // Create mask
     this.maskGfx = createGraphics(90, 90);
     this.maskGfx.ellipse(45, 45, 90, 90);
     this.img.mask(this.maskGfx);
@@ -278,7 +288,7 @@ class Circle {
     noStroke();
     ellipse(0, 0, this.r * 2);
 
-    // 2. Photo with Lilac Wash
+    // 2. Photo (Now centered!)
     imageMode(CENTER);
     tint(200, 180, 220); 
     image(this.img, 0, 0, this.r * 1.8, this.r * 1.8);
@@ -300,22 +310,35 @@ class Circle {
 
 function mousePressed() {
   if (inputMode !== "none") return;
+  
   if (showCamera) {
     let cx = width / 2 - 125, cy = height / 2 - 125;
+    // Check if clicking OUTSIDE the camera box
     if (mouseX < cx || mouseX > cx + 250 || mouseY < cy || mouseY > cy + 300) {
       showCamera = false; snapshot = null; return;
     }
+    
+    // Take Snapshot
     if (!snapshot) {
-      let temp = capture.get(0, 0, 250, 250);
+      // --- FIX: Capture the video and force it into 250x250 ---
+      let temp = capture.get(); 
       snapshot = createGraphics(250, 250);
-      snapshot.push(); snapshot.translate(250, 0); snapshot.scale(-1, 1); snapshot.image(temp, 0, 0); snapshot.pop();
+      snapshot.push(); 
+      snapshot.translate(250, 0); 
+      snapshot.scale(-1, 1); 
+      snapshot.image(temp, 0, 0, 250, 250); // Force fit
+      snapshot.pop();
     } else {
       if (mouseX > width/2) inputMode = "name";
       else snapshot = null;
     }
     return;
   }
+  
+  // Click Plus Button
   if (dist(mouseX, mouseY, width / 2, height / 2) < 40) showCamera = true;
+  
+  // Dragging Logic
   for (let c of circles) {
     if (dist(mouseX + scrollX, mouseY, c.pos.x, c.pos.y) < c.r) {
       c.dragging = true; break;
