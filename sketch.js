@@ -23,10 +23,10 @@ const GREY_TEXT = 'rgba(239, 237, 233, 0.6)';
 function setup() {
   createCanvas(windowWidth, windowHeight);
   
-  // Use High-Res Pixel Density
+  // 1. High-Res Pixel Density (Makes it sharp on iPhones/Macs)
   pixelDensity(displayDensity()); 
 
-  // Setup Glue Layer
+  // 2. Setup Glue Layer to match screen quality
   glueLayer = createGraphics(worldWidth, height);
   glueLayer.pixelDensity(displayDensity()); 
 
@@ -34,7 +34,8 @@ function setup() {
   capture.size(250, 250);
   capture.hide();
   
-  textFont('basic-sans');
+  // 3. UPDATED FONT (Matches index.html)
+  textFont('DM Sans');
 }
 
 function windowResized() {
@@ -54,17 +55,19 @@ function draw() {
   }
   scrollX = constrain(scrollX, 0, worldWidth - width);
 
-  // --- 1. GLUE LAYER ---
-  glueLayer.background(BG_COLOR);
+  // --- 1. PROCESS GLUE LAYER (Metaballs) ---
+  glueLayer.background(BG_COLOR); // Clear with dark background
   glueLayer.noStroke();
-  glueLayer.fill(255);
+  glueLayer.fill(255); // Draw white blobs
   
   for (let c of circles) {
     c.applyBehaviors(circles);
     c.update();
+    // Draw connections into glue layer
     glueLayer.ellipse(c.pos.x, c.pos.y, c.r * 2.2);
   }
   
+  // Liquid Filters
   glueLayer.filter(BLUR, 12);
   glueLayer.filter(THRESHOLD, 0.5);
 
@@ -72,19 +75,19 @@ function draw() {
   push();
   translate(-scrollX, 0);
   
-  // Glows
+  // PASS 1: DRAW GLOWS
   for (let c of circles) {
     if (c.connections.length > 0) {
       c.drawGlow();
     }
   }
 
-  // Glue (Tinted)
+  // PASS 2: DRAW GLUE (Tinted Cream)
   tint(CREAM);
   image(glueLayer, 0, 0); 
   noTint();
   
-  // Faces
+  // PASS 3: DRAW FACES
   for (let c of circles) {
     c.display();
   }
