@@ -15,11 +15,12 @@ let glueLayer;
 let capture;
 let snapshot = null;
 let showCamera = false;
-let activeInput = null; // Holds the text box
+let activeInput = null;
 
 // Input States
 let userName = ""; 
 let userTasks = "";
+let userWork = ""; // NEW: Stores the "Working on" answer
 let inputMode = "none"; 
 
 // Scroll Logic
@@ -37,27 +38,27 @@ function setup() {
   createCanvas(windowWidth, windowHeight);
   pixelDensity(window.devicePixelRatio); 
   
-  // --- MOBILE FIX: LOCK SCROLL ---
-  // This stops the page from "bouncing" when you drag
+  // Mobile Scroll Lock
   document.body.style.overflow = 'hidden'; 
   document.body.style.touchAction = 'none';
 
-  // --- CONNECT TO DATABASE ---
+  // Connect Database
   firebase.initializeApp(firebaseConfig);
   db = firebase.firestore();
 
-  // --- LISTEN FOR UPDATES ---
+  // Listen for Updates
   db.collection("circles").orderBy("timestamp", "asc").onSnapshot((querySnapshot) => {
       let newCircles = [];
       querySnapshot.forEach((doc) => {
           let data = doc.data();
-          let c = new Circle(data.x, data.y, data.imageString, data.name, data.tasks, doc.id);
+          // Retrieve 'work' from database
+          let c = new Circle(data.x, data.y, data.imageString, data.name, data.tasks, data.work, doc.id);
           newCircles.push(c);
       });
       circles = newCircles;
   });
 
-  // Setup Graphics
+  // Graphics Setup
   glueLayer = createGraphics(worldWidth, height);
   glueLayer.pixelDensity(window.devicePixelRatio); 
 
@@ -65,7 +66,8 @@ function setup() {
   capture.size(250, 250);
   capture.hide();
   
-  textFont('DM Sans');
+  // USE YOUR ADOBE FONT HERE
+  textFont('basic-sans');
 }
 
 function windowResized() {
@@ -74,24 +76,17 @@ function windowResized() {
   glueLayer.pixelDensity(window.devicePixelRatio);
 }
 
-// --- MOBILE FIX: PREVENT DEFAULT SCROLLING ---
 function touchMoved() {
-  // If we are NOT in the camera, block default browser scrolling
-  if (!showCamera) {
-    return false;
-  }
+  if (!showCamera) return false;
 }
 
 function draw() {
   background(BG_COLOR);
 
-  // --- SCROLL LOGIC (UPDATED FOR MOBILE) ---
+  // Scroll Logic
   if (mouseIsPressed && !showCamera && inputMode === "none" && !activeInput) {
     let draggingAny = circles.some(c => c.dragging);
-    
-    // If we aren't holding a circle, drag the world
     if (!draggingAny) {
-        // use (mouseX - pmouseX) instead of movedX for better touch response
         let delta = mouseX - pmouseX;
         scrollX -= delta; 
     }
@@ -116,14 +111,17 @@ function draw() {
   push();
   translate(-scrollX, 0);
   
+  // Draw Glows
   for (let c of circles) {
     if (c.connections.length > 0) c.drawGlow();
   }
 
+  // Draw Glue
   tint(CREAM);
   image(glueLayer, 0, 0); 
   noTint();
   
+  // Draw Faces
   for (let c of circles) {
     c.display();
   }
@@ -184,40 +182,41 @@ function drawCameraInterface() {
     fill(LILAC); textAlign(RIGHT); text("approve", cx + 250, cy + 300);
   } else {
     fill(CREAM); 
+    // --- UPDATED INPUT PROMPTS ---
     if (inputMode === "name") {
       textSize(20); text("type your name & press enter", width/2, cy - 40);
     } else if (inputMode === "tasks") {
       textSize(20); text("how many tasks have you completed today?", width/2, cy - 40);
+    } else if (inputMode === "work") {
+      textSize(20); text("what are you working on now?", width/2, cy - 40);
     }
   }
 }
 
-// --- NEW KEYBOARD LOGIC (WORKS ON MOBILE) ---
+// --- KEYBOARD & INPUT LOGIC ---
 function createStyledInput(isNumber) {
   if (activeInput) activeInput.remove();
   
   activeInput = createInput('');
   if (isNumber) activeInput.attribute('type', 'number');
   
-  // Style to match design
-  activeInput.style('font-family', 'DM Sans');
+  activeInput.style('font-family', 'basic-sans'); 
+  activeInput.style('font-weight', '700'); 
   activeInput.style('background', 'transparent');
   activeInput.style('border', 'none');
   activeInput.style('border-bottom', '2px solid #93A4FF'); 
   activeInput.style('color', '#EFEDE9'); 
   activeInput.style('font-size', '32px');
   activeInput.style('text-align', 'center');
-  activeInput.style('width', '200px');
+  activeInput.style('width', '300px'); 
   activeInput.style('outline', 'none');
   activeInput.style('z-index', '1000');
   
-  // Fixed Position for Mobile
   activeInput.style('position', 'fixed');
   activeInput.style('left', '50%');
   activeInput.style('top', '65%'); 
   activeInput.style('transform', 'translate(-50%, -50%)');
 
-  // Force Focus
   setTimeout(() => activeInput.elt.focus(), 10);
   
   activeInput.elt.addEventListener("keydown", function(event) {
@@ -228,17 +227,25 @@ function createStyledInput(isNumber) {
 }
 
 function handleInputSubmit() {
+  let val = activeInput.value();
+  
   if (inputMode === "name") {
-      let val = activeInput.value();
       if (val.length > 0) {
           userName = val;
           inputMode = "tasks";
-          createStyledInput(true); // Switch to tasks (number keyboard)
+          createStyledInput(true); // Number input
       }
-  } else if (inputMode === "tasks") {
-      let val = activeInput.value();
+  } 
+  else if (inputMode === "tasks") {
       if (val.length > 0) {
           userTasks = val;
+          inputMode = "work"; // NEW STEP
+          createStyledInput(false); // Text input again
+      }
+  }
+  else if (inputMode === "work") {
+      if (val.length > 0) {
+          userWork = val;
           uploadCircle();
       }
   }
@@ -255,19 +262,23 @@ function uploadCircle() {
   db.collection("circles").add({
       name: userName.toLowerCase(),
       tasks: int(userTasks),
+      work: userWork.toLowerCase(), // Save the new answer
       imageString: imgString,
       x: width / 2,
-      y: height / 2,
+      y: height / 2 - 150, // Spawn high above the + button
       timestamp: firebase.firestore.FieldValue.serverTimestamp()
   });
 
-  inputMode = "none"; showCamera = false; snapshot = null; userName = ""; userTasks = "";
+  inputMode = "none"; showCamera = false; snapshot = null; 
+  userName = ""; userTasks = ""; userWork = "";
 }
 
 class Circle {
-  constructor(x, y, imgString, name, tasks, id) {
+  constructor(x, y, imgString, name, tasks, work, id) {
     let angle = random(TWO_PI);
-    let distOut = random(100, 140); 
+    let distOut = random(150, 400); 
+    
+    // Position
     if (x && y) this.pos = createVector(x, y);
     else this.pos = createVector(width/2 + scrollX + cos(angle) * distOut, height/2 + sin(angle) * distOut);
     
@@ -278,6 +289,7 @@ class Circle {
 
     this.displayName = name;
     this.tasks = tasks;
+    this.displayWork = work || "working"; 
     this.connections = []; 
 
     this.img = createImage(90, 90);
@@ -293,36 +305,59 @@ class Circle {
   applyBehaviors(others) {
     if (this.dragging) return;
 
-    let viewCenter = createVector(width/2 + scrollX, height/2);
-    if (dist(this.pos.x, this.pos.y, viewCenter.x, viewCenter.y) < 85) {
-      this.pos.add(p5.Vector.sub(this.pos, viewCenter).normalize().mult(2));
+    // --- 1. AVOID THE PLUS BUTTON ---
+    let worldCenter = createVector(width/2 + scrollX, height/2);
+    let distToCenter = dist(this.pos.x, this.pos.y, worldCenter.x, worldCenter.y);
+    
+    // Strong repulsion if too close to center
+    if (distToCenter < 140) { 
+       let push = p5.Vector.sub(this.pos, worldCenter).normalize().mult(4);
+       this.pos.add(push);
     }
 
+    // --- 2. INTERACT WITH OTHERS ---
     for (let other of others) {
       if (other === this) continue;
+      
       let d = dist(this.pos.x, this.pos.y, other.pos.x, other.pos.y);
-      let connectThreshold = this.r * 1.8;
+      let minDistance = this.r * 2 + 10; // 90px + padding
 
-      if (d < connectThreshold && !this.connections.includes(other)) {
-          this.connections.push(other);
-          if (!other.connections.includes(this)) other.connections.push(this);
+      // A. SEPARATION (Don't overlap)
+      if (d < minDistance) {
+          let push = p5.Vector.sub(this.pos, other.pos).normalize().mult(1.5);
+          this.pos.add(push);
       }
 
+      // B. STICKY LOGIC (Only connect if dragged close)
+      if ((this.dragging || other.dragging) && d < minDistance + 10) {
+          if (!this.connections.includes(other)) {
+              this.connections.push(other);
+              other.connections.push(this);
+          }
+      }
+
+      // C. CONNECTION PHYSICS
       if (this.connections.includes(other)) {
-          let targetDist = this.r * 1.5;
-          let force = (d - targetDist) * 0.08;
+          let targetDist = this.r * 2.1; 
+          let force = (d - targetDist) * 0.05; 
           let diff = p5.Vector.sub(other.pos, this.pos);
           diff.normalize().mult(force);
           this.pos.add(diff);
-      } else if (d < this.r * 1.8) {
-          this.pos.add(p5.Vector.sub(this.pos, other.pos).normalize().mult(0.5));
+          
+          if (d > this.r * 5) {
+             this.connections = this.connections.filter(c => c !== other);
+          }
       }
     }
   }
 
   update() {
     if (this.dragging) this.pos.set(mouseX + scrollX, mouseY);
-    else this.pos.y += sin(frameCount * 0.03 + this.offset) * 0.2;
+    else {
+        // Gentle Floating
+        this.pos.y += sin(frameCount * 0.02 + this.offset) * 0.1;
+        this.pos.x += cos(frameCount * 0.01 + this.offset) * 0.1;
+    }
   }
 
   drawGlow() {
@@ -341,6 +376,7 @@ class Circle {
     push();
     translate(this.pos.x, this.pos.y);
     
+    // Border
     let grad = drawingContext.createLinearGradient(-this.r, -this.r, this.r, this.r);
     grad.addColorStop(0, CREAM);
     grad.addColorStop(1, LILAC);
@@ -348,25 +384,37 @@ class Circle {
     noStroke();
     ellipse(0, 0, this.r * 2);
 
+    // Photo
     imageMode(CENTER);
     tint(200, 180, 220); 
     image(this.img, 0, 0, this.r * 1.8, this.r * 1.8);
     noTint();
 
+    // Wash
     fill(147, 164, 255, 40); 
     ellipse(0, 0, this.r * 1.8);
 
+    // Text
     fill(CREAM);
     textAlign(CENTER, CENTER);
     textStyle(BOLD);
-    textSize(10); text(this.displayName, 0, -6);
-    textSize(7); text(this.tasks + " tasks completed today", 0, 6);
+    
+    // NAME
+    textSize(10); 
+    text(this.displayName, 0, -6);
+    
+    // WORK (Replaces tasks count)
+    textSize(8); 
+    // Truncate if too long so it fits in circle
+    let displayStr = this.displayWork.length > 15 ? this.displayWork.substring(0, 15) + "..." : this.displayWork;
+    text(displayStr, 0, 6);
+    
     pop();
   }
 }
 
 function mousePressed() {
-  if (activeInput) return; // Don't do anything if we are typing
+  if (activeInput) return; 
 
   if (showCamera) {
     let cx = width / 2 - 125, cy = height / 2 - 125;
@@ -380,7 +428,7 @@ function mousePressed() {
     } else {
       if (mouseX > width/2) {
          inputMode = "name";
-         createStyledInput(false); // Enable Keyboard
+         createStyledInput(false); 
       }
       else snapshot = null;
     }
