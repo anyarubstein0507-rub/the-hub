@@ -1,11 +1,21 @@
-html, body {
+body {
   margin: 0;
   padding: 0;
-  overflow: hidden;         /* Prevents scrollbars */
-  background-color: #1D1D1D; /* Matches your dark grey background */
-  font-family: 'DM Sans', sans-serif; /* The new font */
+  background-color: #1D1D1D;
+  /* This prevents the white scroll bars from appearing */
+  overflow: hidden; 
+  /* This connects the Adobe Font to the whole page */
+  font-family: "basic-sans", sans-serif;
+  font-weight: 300;
+  font-style: normal;
 }
 
 canvas {
-  display: block;           /* Removes extra white space at the bottom */
+  display: block;
+}
+
+/* This ensures the typing box uses the correct font */
+input {
+  font-family: "basic-sans", sans-serif !important;
+  font-weight: 700 !important;
 }
