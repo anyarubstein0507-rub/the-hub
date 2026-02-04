@@ -20,7 +20,7 @@ let activeInput = null;
 // Input States
 let userName = ""; 
 let userTasks = "";
-let userWork = ""; // NEW: Stores the "Working on" answer
+let userWork = ""; 
 let inputMode = "none"; 
 
 // Scroll Logic
@@ -36,7 +36,11 @@ const GREY_TEXT = 'rgba(239, 237, 233, 0.6)';
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
-  pixelDensity(window.devicePixelRatio); 
+  
+  // --- MOBILE OPTIMIZATION 1: Cap Pixel Density ---
+  // Prevents lag on high-end phones (3x/4x screens)
+  let d = min(window.devicePixelRatio, 2);
+  pixelDensity(d); 
   
   // Mobile Scroll Lock
   document.body.style.overflow = 'hidden'; 
@@ -51,7 +55,6 @@ function setup() {
       let newCircles = [];
       querySnapshot.forEach((doc) => {
           let data = doc.data();
-          // Retrieve 'work' from database
           let c = new Circle(data.x, data.y, data.imageString, data.name, data.tasks, data.work, doc.id);
           newCircles.push(c);
       });
@@ -60,33 +63,41 @@ function setup() {
 
   // Graphics Setup
   glueLayer = createGraphics(worldWidth, height);
-  glueLayer.pixelDensity(window.devicePixelRatio); 
+  glueLayer.pixelDensity(d); // Match main canvas density
 
   capture = createCapture(VIDEO);
   capture.size(250, 250);
   capture.hide();
   
-  // USE YOUR ADOBE FONT HERE
   textFont('basic-sans');
 }
 
 function windowResized() {
+  // --- MOBILE OPTIMIZATION 2: Keyboard Safety ---
+  // Don't resize if the user is typing (prevents keyboard from crashing the view)
+  if (inputMode !== "none" || showCamera) return;
+
   resizeCanvas(windowWidth, windowHeight);
+  
+  let d = min(window.devicePixelRatio, 2);
   glueLayer = createGraphics(worldWidth, height);
-  glueLayer.pixelDensity(window.devicePixelRatio);
+  glueLayer.pixelDensity(d);
 }
 
 function touchMoved() {
+  // Allow default behavior only if we are NOT in the camera view
+  // This helps scroll smoothness on some devices
   if (!showCamera) return false;
 }
 
 function draw() {
   background(BG_COLOR);
 
-  // Scroll Logic
+  // Scroll Logic (Touch & Mouse)
   if (mouseIsPressed && !showCamera && inputMode === "none" && !activeInput) {
     let draggingAny = circles.some(c => c.dragging);
     if (!draggingAny) {
+        // Use standard sensitivity
         let delta = mouseX - pmouseX;
         scrollX -= delta; 
     }
@@ -104,7 +115,8 @@ function draw() {
     glueLayer.ellipse(c.pos.x, c.pos.y, c.r * 2.2);
   }
   
-  glueLayer.filter(BLUR, 12);
+  // Filters (Heavy on mobile, so we keep blur low)
+  glueLayer.filter(BLUR, 10); 
   glueLayer.filter(THRESHOLD, 0.5);
 
   // --- RENDER WORLD ---
@@ -182,13 +194,15 @@ function drawCameraInterface() {
     fill(LILAC); textAlign(RIGHT); text("approve", cx + 250, cy + 300);
   } else {
     fill(CREAM); 
-    // --- UPDATED INPUT PROMPTS ---
+    // Hints appear ABOVE the input box
+    let textY = height * 0.25; 
+    
     if (inputMode === "name") {
-      textSize(20); text("type your name & press enter", width/2, cy - 40);
+      textSize(20); text("type your name & press enter", width/2, textY);
     } else if (inputMode === "tasks") {
-      textSize(20); text("how many tasks have you completed today?", width/2, cy - 40);
+      textSize(20); text("how many tasks have you completed today?", width/2, textY);
     } else if (inputMode === "work") {
-      textSize(20); text("what are you working on now?", width/2, cy - 40);
+      textSize(20); text("what are you working on now?", width/2, textY);
     }
   }
 }
@@ -212,9 +226,11 @@ function createStyledInput(isNumber) {
   activeInput.style('outline', 'none');
   activeInput.style('z-index', '1000');
   
+  // --- MOBILE OPTIMIZATION 3: Higher Position ---
+  // Position input at 30% from top so keyboard doesn't hide it
   activeInput.style('position', 'fixed');
   activeInput.style('left', '50%');
-  activeInput.style('top', '65%'); 
+  activeInput.style('top', '35%'); 
   activeInput.style('transform', 'translate(-50%, -50%)');
 
   setTimeout(() => activeInput.elt.focus(), 10);
@@ -233,14 +249,14 @@ function handleInputSubmit() {
       if (val.length > 0) {
           userName = val;
           inputMode = "tasks";
-          createStyledInput(true); // Number input
+          createStyledInput(true); 
       }
   } 
   else if (inputMode === "tasks") {
       if (val.length > 0) {
           userTasks = val;
-          inputMode = "work"; // NEW STEP
-          createStyledInput(false); // Text input again
+          inputMode = "work"; 
+          createStyledInput(false); 
       }
   }
   else if (inputMode === "work") {
@@ -262,10 +278,10 @@ function uploadCircle() {
   db.collection("circles").add({
       name: userName.toLowerCase(),
       tasks: int(userTasks),
-      work: userWork.toLowerCase(), // Save the new answer
+      work: userWork.toLowerCase(),
       imageString: imgString,
       x: width / 2,
-      y: height / 2 - 150, // Spawn high above the + button
+      y: height / 2 - 150, 
       timestamp: firebase.firestore.FieldValue.serverTimestamp()
   });
 
@@ -305,11 +321,10 @@ class Circle {
   applyBehaviors(others) {
     if (this.dragging) return;
 
-    // --- 1. AVOID THE PLUS BUTTON ---
+    // --- 1. CENTER REPULSION (Stronger) ---
     let worldCenter = createVector(width/2 + scrollX, height/2);
     let distToCenter = dist(this.pos.x, this.pos.y, worldCenter.x, worldCenter.y);
     
-    // Strong repulsion if too close to center
     if (distToCenter < 140) { 
        let push = p5.Vector.sub(this.pos, worldCenter).normalize().mult(4);
        this.pos.add(push);
@@ -320,15 +335,15 @@ class Circle {
       if (other === this) continue;
       
       let d = dist(this.pos.x, this.pos.y, other.pos.x, other.pos.y);
-      let minDistance = this.r * 2 + 10; // 90px + padding
+      let minDistance = this.r * 2 + 10; 
 
-      // A. SEPARATION (Don't overlap)
+      // A. SEPARATION (Stronger to prevent clumping)
       if (d < minDistance) {
-          let push = p5.Vector.sub(this.pos, other.pos).normalize().mult(1.5);
+          let push = p5.Vector.sub(this.pos, other.pos).normalize().mult(2.5); // Increased separation force
           this.pos.add(push);
       }
 
-      // B. STICKY LOGIC (Only connect if dragged close)
+      // B. STICKY LOGIC
       if ((this.dragging || other.dragging) && d < minDistance + 10) {
           if (!this.connections.includes(other)) {
               this.connections.push(other);
@@ -354,7 +369,6 @@ class Circle {
   update() {
     if (this.dragging) this.pos.set(mouseX + scrollX, mouseY);
     else {
-        // Gentle Floating
         this.pos.y += sin(frameCount * 0.02 + this.offset) * 0.1;
         this.pos.x += cos(frameCount * 0.01 + this.offset) * 0.1;
     }
@@ -376,7 +390,6 @@ class Circle {
     push();
     translate(this.pos.x, this.pos.y);
     
-    // Border
     let grad = drawingContext.createLinearGradient(-this.r, -this.r, this.r, this.r);
     grad.addColorStop(0, CREAM);
     grad.addColorStop(1, LILAC);
@@ -384,28 +397,22 @@ class Circle {
     noStroke();
     ellipse(0, 0, this.r * 2);
 
-    // Photo
     imageMode(CENTER);
     tint(200, 180, 220); 
     image(this.img, 0, 0, this.r * 1.8, this.r * 1.8);
     noTint();
 
-    // Wash
     fill(147, 164, 255, 40); 
     ellipse(0, 0, this.r * 1.8);
 
-    // Text
     fill(CREAM);
     textAlign(CENTER, CENTER);
     textStyle(BOLD);
     
-    // NAME
     textSize(10); 
     text(this.displayName, 0, -6);
     
-    // WORK (Replaces tasks count)
     textSize(8); 
-    // Truncate if too long so it fits in circle
     let displayStr = this.displayWork.length > 15 ? this.displayWork.substring(0, 15) + "..." : this.displayWork;
     text(displayStr, 0, 6);
     
