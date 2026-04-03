@@ -204,6 +204,11 @@ function drawCameraInterface() {
     } else if (inputMode === "work") {
       textSize(20); text("what are you working on now?", width/2, textY);
     }
+    
+    // Manual submit button hint
+    fill(LILAC);
+    textSize(16);
+    text("tap anywhere down here to continue", width/2, cy + 320);
   }
 }
 
@@ -273,7 +278,8 @@ function uploadCircle() {
       activeInput = null;
   }
 
-  let imgString = snapshot.canvas.toDataURL('image/png');
+  // Compress the image as a JPEG instead of a heavy PNG
+  let imgString = snapshot.canvas.toDataURL('image/jpeg', 0.5);
   
   db.collection("circles").add({
       name: userName.toLowerCase(),
@@ -421,7 +427,13 @@ class Circle {
 }
 
 function mousePressed() {
-  if (activeInput) return; 
+  if (activeInput) {
+    // If they click the bottom area of the screen, force the submit
+    if (mouseY > height / 2) {
+      handleInputSubmit();
+    }
+    return; 
+  }
 
   if (showCamera) {
     let cx = width / 2 - 125, cy = height / 2 - 125;
@@ -431,6 +443,7 @@ function mousePressed() {
     if (!snapshot) {
       let temp = capture.get();
       snapshot = createGraphics(250, 250);
+      snapshot.pixelDensity(1); // Force low resolution so the file size is small enough for Firebase
       snapshot.push(); snapshot.translate(250, 0); snapshot.scale(-1, 1); snapshot.image(temp, 0, 0, 250, 250); snapshot.pop();
     } else {
       if (mouseX > width/2) {
